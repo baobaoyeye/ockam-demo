@@ -1,0 +1,28 @@
+# Mode B install reference config — used to seed the controller's state file
+# on first run. After install, edits go through the controller HTTP API
+# (PATCH /outlets) rather than this file.
+
+node:
+  name: provider
+  transport: 0.0.0.0:14000           # the only port exposed externally
+
+# Pre-seed admin identifiers (comma-separated identifier strings).
+# These will be allowed to talk to the `controller` outlet and thus configure
+# everything else via the SDK.
+admin_identifiers:
+  - "Iput-your-admin-identifier-here"
+
+# Optional: declare some data outlets up-front so they exist on first boot.
+# (You can also add them later via the SDK.)
+outlets:
+  - name: mysql
+    target: 127.0.0.1:3306
+    allow:
+      - "Iput-your-app-identifier-here"
+  # - name: redis
+  #   target: 127.0.0.1:6379
+  #   allow: []
+
+logging:
+  level: info
+  path: /var/log/ockam

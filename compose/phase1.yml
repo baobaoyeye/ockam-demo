@@ -1,0 +1,62 @@
+# Phase 1: Python -> MySQL with NO transport encryption.
+#
+# Topology:
+#   [client container] --(tcp 3306, plaintext)--> [mysql container]
+#                                                       ^
+#                                                       |
+#                                          [sniffer in mysql's net ns]
+#
+# Note: the sniffer is intentionally NOT defined in this compose file.
+# phase4/verify.sh launches it as a standalone `docker run --network
+# container:phase1-mysql` AFTER mysql is healthy. We discovered that
+# compose's `network_mode: service:mysql` does join the right netns, but on
+# this Docker Desktop build, tcpdump in that container fails to receive
+# cross-bridge packets. A standalone `docker run --network container:` works
+# reliably, so verify.sh uses that.
+
+name: ockam-demo-phase1
+
+networks:
+  app:
+    driver: bridge
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: phase1-mysql
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --skip-ssl
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: demo
+      MYSQL_USER: demo
+      MYSQL_PASSWORD: demopw
+    networks:
+      - app
+    volumes:
+      - ../mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-prootpw"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  client:
+    build: ../client
+    image: ockam-demo-client:latest
+    container_name: phase1-client
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: demo
+      MYSQL_PASSWORD: demopw
+      MYSQL_DATABASE: demo
+      DEMO_LABEL: phase1
+    networks:
+      - app
+    depends_on:
+      mysql:
+        condition: service_healthy
+    # Small delay so tcpdump in the sniffer has finished plumbing.
+    command: ["sh", "-c", "sleep 3 && python /app/demo.py"]

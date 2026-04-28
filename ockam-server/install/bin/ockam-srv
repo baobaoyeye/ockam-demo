@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Management CLI installed by install.sh — wraps systemctl + curl + cleanup.
+set -euo pipefail
+
+CMD=${1:-help}; shift || true
+
+case "${CMD}" in
+  status)
+    if [[ -d /run/systemd/system ]]; then
+      systemctl status --no-pager ockam-server ockam-controller 2>&1 | head -40
+    fi
+    echo
+    echo "--- /healthz ---"
+    curl -fsS http://127.0.0.1:8080/healthz | python3 -m json.tool 2>/dev/null || echo "(controller not reachable)"
+    echo "--- ports ---"
+    (command -v ss >/dev/null && ss -tlnp 2>/dev/null | grep -E ':(14000|8080)\b') || true
+    ;;
+
+  reload)
+    if [[ -d /run/systemd/system ]]; then
+      systemctl restart ockam-controller
+    else
+      echo "[reload] systemd not active; restart manually"
+      exit 1
+    fi
+    ;;
+
+  show-admin)
+    if [[ -f /var/lib/ockam-server/admin/identifier ]]; then
+      cat /var/lib/ockam-server/admin/identifier
+    else
+      echo "(no provider identifier yet — run install.sh first)" >&2
+      exit 1
+    fi
+    ;;
+
+  add-admin)
+    [[ -n "${1:-}" ]] || { echo "usage: ockam-srv add-admin <identifier>" >&2; exit 2; }
+    NEW="$1"
+    UNIT=/etc/systemd/system/ockam-controller.service
+    [[ -f "${UNIT}" ]] || { echo "systemd unit not found: ${UNIT}" >&2; exit 1; }
+    if grep -q "^Environment=OCKAM_CONTROLLER_ADMIN_IDENTIFIERS=" "${UNIT}"; then
+      sed -i.bak "s|^Environment=OCKAM_CONTROLLER_ADMIN_IDENTIFIERS=.*|&,${NEW}|" "${UNIT}"
+    else
+      echo "Environment=OCKAM_CONTROLLER_ADMIN_IDENTIFIERS=${NEW}" >> "${UNIT}"
+    fi
+    systemctl daemon-reload
+    systemctl restart ockam-controller
+    echo "[add-admin] ${NEW} added"
+    ;;
+
+  uninstall)
+    if [[ -d /run/systemd/system ]]; then
+      systemctl disable --now ockam-server ockam-controller 2>/dev/null || true
+    fi
+    rm -f /etc/systemd/system/ockam-server.service /etc/systemd/system/ockam-controller.service
+    rm -f /usr/local/bin/ockam-srv /usr/local/bin/python-ockam
+    rm -rf /opt/venv
+    echo "[uninstall] systemd + binaries removed"
+    echo "[uninstall] data preserved: /var/lib/ockam-server, /var/lib/ockam-controller, /var/log/ockam"
+    echo "[uninstall] to delete data:  rm -rf /var/lib/ockam-server /var/lib/ockam-controller /var/log/ockam"
+    if [[ -d /run/systemd/system ]]; then
+      systemctl daemon-reload
+    fi
+    ;;
+
+  help|*)
+    cat <<EOM
+ockam-srv — manage the Ockam server (Mode B installation)
+
+Commands:
+  status              show systemctl + healthz + listening ports
+  reload              restart controller (apply config changes)
+  show-admin          print the provider identifier (give to SDK developers)
+  add-admin <I_xxx>   whitelist an admin identifier and restart controller
+  uninstall           remove binaries and systemd units (data preserved)
+EOM
+    ;;
+esac

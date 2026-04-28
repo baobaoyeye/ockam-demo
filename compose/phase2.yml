@@ -1,0 +1,111 @@
+# Phase 2: same Python -> MySQL traffic, but tunnelled through an
+# Ockam point-to-point secure channel.
+#
+# Topology (and trust zones):
+#
+#   ┌─────────────── trust zone "client" ──────────────┐    ┌── trust zone "server" ──┐
+#   │  [python] ──127.0.0.1:15432──> [ockam-client]    │    │ [ockam-server] ──> mysql│
+#   │   (sidecar share net ns)                         │    │                         │
+#   │                                                  │    │                         │
+#   │                    [sniffer share net ns]──┐     │    │                         │
+#   └────────────────────────────────────────────┼─────┘    └─────────────────────────┘
+#                                                │            ^
+#                                                │            │
+#                                            captures eth0 ───┘
+#                                            ENCRYPTED Ockam frames over tcp/14000
+#
+# Why each piece:
+#  - The python client is a sidecar of ockam-client (network_mode service:),
+#    so its TCP connect to 127.0.0.1:15432 reaches the local Ockam inlet
+#    over loopback. The inlet plaintext never touches a wire.
+#  - mysql is on a private 'internal' network, only ockam-server can talk to
+#    it. The sniffer is NOT in ockam-server's namespace (it would see that
+#    plaintext); it is sidecar of ockam-CLIENT, whose only external interface
+#    is the encrypted tunnel.
+#  - tcpdump on -i eth0 (NOT lo) excludes the sidecar's plaintext to/from the
+#    local inlet — we only record what actually crossed the wire.
+
+name: ockam-demo-phase2
+
+networks:
+  internal:
+    driver: bridge
+  tunnel:
+    driver: bridge
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: phase2-mysql
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --skip-ssl
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: demo
+      MYSQL_USER: demo
+      MYSQL_PASSWORD: demopw
+    networks:
+      - internal
+    volumes:
+      - ../mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-prootpw"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  ockam-server:
+    image: ockam-demo-ockam:latest
+    build: ../ockam
+    container_name: phase2-ockam-server
+    environment:
+      ROLE: server
+      UPSTREAM_HOST: mysql
+      UPSTREAM_PORT: "3306"
+      LISTEN_ADDR: "0.0.0.0:14000"
+    networks:
+      - internal
+      - tunnel
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  ockam-client:
+    image: ockam-demo-ockam:latest
+    build: ../ockam
+    container_name: phase2-ockam-client
+    environment:
+      ROLE: client
+      SERVER_HOST: ockam-server
+      SERVER_PORT: "14000"
+      INLET_ADDR: "0.0.0.0:15432"
+    networks:
+      - tunnel
+    depends_on:
+      - ockam-server
+
+  # Note: like in phase1.yml, the sniffer is launched by phase4/verify.sh
+  # as a standalone `docker run --network container:phase2-ockam-client`,
+  # because compose's `network_mode: service:` form failed to deliver
+  # cross-bridge packets to tcpdump on this Docker Desktop build.
+
+  client:
+    image: ockam-demo-client:latest
+    build: ../client
+    container_name: phase2-client
+    environment:
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: "15432"
+      MYSQL_USER: demo
+      MYSQL_PASSWORD: demopw
+      MYSQL_DATABASE: demo
+      DEMO_LABEL: phase2
+    # Sidecar: share ockam-client's network namespace. Connects to the local inlet.
+    network_mode: "service:ockam-client"
+    depends_on:
+      ockam-client:
+        condition: service_started
+    # Wait long enough for both ockam nodes to finish setting up (node create,
+    # listener, outlet, secure-channel handshake on first packet).
+    command: ["sh", "-c", "sleep 8 && python /app/demo.py"]

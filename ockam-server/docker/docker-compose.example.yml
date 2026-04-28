@@ -1,0 +1,40 @@
+# Mode A — example deployment of the ockam-server container.
+#
+# This is what you would actually deploy in production (after building/
+# pulling the ockam-demo-server image). The container exposes ONE port
+# (14000/tcp). All control-plane traffic from the SDK goes through that
+# same port via Ockam tunneling.
+#
+# Run from this directory:
+#   docker compose -f docker-compose.example.yml up -d
+#
+# After the container is healthy, copy out the provider identifier so your
+# SDK can pin it for secure-channel verification:
+#   docker cp ockam-server:/var/lib/ockam-server/admin/identifier ./provider.id
+
+name: ockam-server-modeA
+
+services:
+  ockam-server:
+    container_name: ockam-server
+    image: ockam-demo-server:latest
+    build:
+      context: ..                  # ../ = ockam-server/
+      dockerfile: docker/Dockerfile
+    ports:
+      - "14000:14000"              # ONLY external port
+    environment:
+      # Comma-separated identifier(s) of the SDK admin(s). Required for
+      # the controller outlet to allow anyone in. You can also leave this
+      # empty and add admins later via curl through the Ockam tunnel.
+      ADMIN_IDENTIFIERS: ""
+    volumes:
+      - ockam-server-state:/var/lib/ockam-server
+      - ockam-controller-state:/var/lib/ockam-controller
+      - ockam-logs:/var/log/ockam
+    restart: unless-stopped
+
+volumes:
+  ockam-server-state:
+  ockam-controller-state:
+  ockam-logs:

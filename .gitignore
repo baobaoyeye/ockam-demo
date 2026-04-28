@@ -1,0 +1,39 @@
+# --- verify.sh build artifacts (each run regenerates them) ----------------
+# pcaps + analyzer report
+captures/
+# Java SDK build outputs (mvn-built jar lives under sdk-java/target/, demo
+# class + downloaded mysql driver land in client-side/.build/)
+client-side/.build/
+
+# verify.sh writes a per-batch compose file before bringing services up
+client-side/sdk-python/compose.yml
+client-side/sdk-java/compose.yml
+
+# --- Java / Maven ---------------------------------------------------------
+**/target/
+**/dependency-reduced-pom.xml
+**/.mvn/
+*.class
+
+# --- Python ---------------------------------------------------------------
+**/__pycache__/
+*.py[cod]
+*$py.class
+**/*.egg-info/
+**/.eggs/
+**/dist/
+**/build/
+**/.venv/
+venv/
+.pytest_cache/
+
+# --- Backup files left by sed -i'.bak' / vim --------------------------------
+*.bak
+*~
+*.swp
+
+# --- IDE / OS noise -------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.iml
